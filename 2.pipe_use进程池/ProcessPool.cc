@@ -17,6 +17,7 @@ public:
         : _cmdfd(cmdfd), _slaverid(slaverid), _processname(processname)
     {
     }
+
 public:
     int _cmdfd;               // 发送任务的文件描述符
     pid_t _slaverid;          // 子进程的pid
@@ -38,27 +39,37 @@ void slaver()
                 tasks[cmdcode]();
             }
         }
-        if(n==0) break;
+        if (n == 0)
+            break;
     }
 }
 
 void InitProcessPool(std::vector<channel> *channels)
 {
-
+    // version2 -- 确保每个子进程(管道)只有一个写端
+    std::vector<int> oldfds; // 保存父进程的写端
     for (int i = 0; i < processnum; i++)
     {
         int pipefd[2]; // 临时空间
         int n = pipe(pipefd);
         assert(!n); // asseert只在debug下有效,正常情况下要写成判断
         (void)n;
-
+        // 创建子进程
         pid_t id = fork();
         if (id == 0) // child
         {
+            // 关闭从父进程继承下来的写端
+            std::cout << "child getpid: " << getpid() << " close history fd: ";
+            for (auto fd : oldfds)
+            {
+                std::cout << fd << " ";
+                close(fd);
+            }
+            std::cout << std::endl;
             close(pipefd[1]);
             dup2(pipefd[0], 0); // 子进程的标准输入重定向到管道的读端
             slaver();           // 子进程的work
-            std::cout<<"process:"<<getpid()<<" quit"<<std::endl;
+            std::cout << "process:" << getpid() << " quit" << std::endl;
             exit(0);
         }
         // father
@@ -67,6 +78,9 @@ void InitProcessPool(std::vector<channel> *channels)
         // 添加channel字段
         std::string name = "process-" + std::to_string(i);
         channels->push_back(channel(pipefd[1], id, name));
+
+        oldfds.push_back(pipefd[1]);
+        sleep(1);
     }
 }
 void Debug(const std::vector<channel> &channels)
@@ -78,50 +92,66 @@ void Debug(const std::vector<channel> &channels)
 }
 void Menu()
 {
-    std::cout<<"#########################################################"<<std::endl;
-    std::cout<<"########    1.刷新日志      2.刷新野怪          ###########"<<std::endl;
-    std::cout<<"########    3.检测软件更新  4.更新血条和蓝量    ###########"<<std::endl;
-    std::cout<<"########         -1.退出                       ###########"<<std::endl;
-    std::cout<<"#########################################################"<<std::endl;
+    std::cout << "#########################################################" << std::endl;
+    std::cout << "########    1.刷新日志      2.刷新野怪          ###########" << std::endl;
+    std::cout << "########    3.检测软件更新  4.更新血条和蓝量    ###########" << std::endl;
+    std::cout << "########         -1.退出                       ###########" << std::endl;
+    std::cout << "#########################################################" << std::endl;
 }
 void ctrlSlaver(std::vector<channel> &channels)
 {
-    int which=0; 
-    while(true)
+    int which = 0;
+    while (true)
     {
         Menu();
-        std::cout<<"Please Enter@";
-        int select=0;
-        std::cin>>select;
-        if(select<=0 || select>=5) break;
+        std::cout << "Please Enter@";
+        int select = 0;
+        std::cin >> select;
+        if (select <= 0 || select >= 5)
+            break;
 
         // 1.选择任务
-        int cmdcode=select-1;
-        //int cmdcode = rand() % tasks.size();
-        // 2.选择进程 -- 两种方式：随机和轮循
-        // int processpos = rand() % channels.size();
-        // std::cout << "father say cmdcode: " << cmdcode << " already send to " << channels[processpos]._slaverid << " process name: " << channels[processpos]._processname << std::endl;
+        int cmdcode = select - 1;
+        // int cmdcode = rand() % tasks.size();
+        //  2.选择进程 -- 两种方式：随机和轮循
+        //  int processpos = rand() % channels.size();
+        //  std::cout << "father say cmdcode: " << cmdcode << " already send to " << channels[processpos]._slaverid << " process name: " << channels[processpos]._processname << std::endl;
         std::cout << "father say cmdcode: " << cmdcode << " already send to " << channels[which]._slaverid << " process name: " << channels[which]._processname << std::endl;
         // 3.发送任务
-        //write(channels[processpos]._cmdfd, &cmdcode, sizeof(cmdcode));
+        // write(channels[processpos]._cmdfd, &cmdcode, sizeof(cmdcode));
         write(channels[which]._cmdfd, &cmdcode, sizeof(cmdcode));
         which++;
-        which%=channels.size();
+        which %= channels.size();
         sleep(1);
     }
 }
 void QuitProcess(const std::vector<channel> &channels)
 {
-    for(const auto &c:channels)
+    // 解决version1 -- 从最后一个子进程开始反方向回收
+    int last = channels.size() - 1;
+    for (int i = last; i >= 0; i--)
+    {
+        close(channels[i]._cmdfd);
+        waitpid(channels[i]._slaverid, nullptr, 0);
+    }
+    // version2 -- 确保每个子进程(管道)只有一个写端
+    for (const auto &c : channels)
     {
         close(c._cmdfd);
+        waitpid(c._slaverid, nullptr, 0);
     }
-    sleep(5);
-    for(const auto &c:channels)
-    {
-        waitpid(c._slaverid,nullptr,0);
-    }
-    sleep(5);
+
+    // 有些阻塞问题
+    //  for(const auto &c:channels)
+    //  {
+    //      close(c._cmdfd);
+    //  }
+    //  sleep(5);
+    //  for(const auto &c:channels)
+    //  {
+    //      waitpid(c._slaverid,nullptr,0);
+    //  }
+    //  sleep(5);
 }
 int main()
 {
