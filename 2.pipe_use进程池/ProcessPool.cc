@@ -116,12 +116,12 @@ void QuitProcess(const std::vector<channel> &channels)
     {
         close(c._cmdfd);
     }
-    //sleep(5);
+    sleep(5);
     for(const auto &c:channels)
     {
         waitpid(c._slaverid,nullptr,0);
     }
-    //sleep(5);
+    sleep(5);
 }
 int main()
 {
